@@ -11,7 +11,7 @@ Programma iniziale (semplice ma estendibile) che, data una **heightmap** normali
 - **CSV** rettangolare con valori numerici tra `0` e `1`
 - **PNG / JPG / JPEG** (convertiti in scala di grigi; `0`=nero=quota bassa, `255`=bianco=quota alta)
 
-> Per PNG/JPG è richiesta la libreria **Pillow**:
+> Per PNG/JPG e per l'export PNG è richiesta la libreria **Pillow**:
 >
 > ```bash
 > pip install pillow
@@ -37,9 +37,24 @@ python3 climate_biome_sim.py data/mia_heightmap.csv --out-prefix output/mondo_cs
 python3 climate_biome_sim.py data/mia_heightmap.png --out-prefix output/mondo_img
 ```
 
-## File output
+## Output PNG (nuovo)
 
-Con prefisso `output/mondo1` otterrai:
+Per esportare anche immagini PNG (heightmap, temperatura, umidità, biome):
+
+```bash
+python3 climate_biome_sim.py data/mia_heightmap.jpg --out-prefix output/mondo1 --export-png
+```
+
+File aggiuntivi prodotti:
+
+- `output/mondo1_heightmap.png`
+- `output/mondo1_temperature.png`
+- `output/mondo1_moisture.png`
+- `output/mondo1_biome.png`
+
+## File output CSV
+
+Con prefisso `output/mondo1` otterrai sempre:
 
 - `output/mondo1_heightmap.csv`
 - `output/mondo1_temperature.csv`

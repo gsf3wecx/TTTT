@@ -9,6 +9,7 @@ Output:
 - *_temperature.csv : temperatura normalizzata [0, 1]
 - *_moisture.csv    : umidità normalizzata [0, 1]
 - *_biome.csv       : etichette biome per cella
+- opzionale: PNG per heightmap/temperature/moisture/biome
 """
 
 from __future__ import annotations
@@ -22,6 +23,16 @@ from typing import List
 Grid = List[List[float]]
 BiomeGrid = List[List[str]]
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
+
+BIOME_COLORS: dict[str, tuple[int, int, int]] = {
+    "OCEAN": (30, 90, 180),
+    "ALPINE": (180, 180, 180),
+    "TUNDRA": (210, 230, 230),
+    "DESERT": (237, 201, 175),
+    "GRASSLAND": (124, 179, 66),
+    "TEMPERATE_FOREST": (34, 139, 34),
+    "TROPICAL_FOREST": (0, 100, 0),
+}
 
 
 class ClimateBiomeSimulator:
@@ -152,6 +163,16 @@ class ClimateBiomeSimulator:
                     raise ValueError("I valori della heightmap devono essere in [0, 1].")
 
 
+def _require_pillow():
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(
+            "Per leggere/scrivere PNG/JPG serve Pillow. Installa con: pip install pillow"
+        ) from exc
+    return Image
+
+
 def read_heightmap_csv(path: Path) -> Grid:
     with path.open("r", newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
@@ -160,17 +181,16 @@ def read_heightmap_csv(path: Path) -> Grid:
 
 
 def read_heightmap_image(path: Path) -> Grid:
-    try:
-        from PIL import Image
-    except ImportError as exc:
-        raise RuntimeError(
-            "Per leggere PNG/JPG serve Pillow. Installa con: pip install pillow"
-        ) from exc
+    Image = _require_pillow()
 
     with Image.open(path) as img:
         gray = img.convert("L")
         width, height = gray.size
-        pixels = list(gray.getdata())
+        flatten_fn = getattr(gray, "get_flattened_data", None)
+        if callable(flatten_fn):
+            pixels = list(flatten_fn())
+        else:
+            pixels = list(gray.getdata())
 
     if width == 0 or height == 0:
         raise ValueError("L'immagine della heightmap è vuota.")
@@ -205,6 +225,31 @@ def write_biome_grid_csv(path: Path, grid: BiomeGrid) -> None:
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerows(grid)
+
+
+def write_float_grid_png(path: Path, grid: Grid) -> None:
+    Image = _require_pillow()
+    rows = len(grid)
+    cols = len(grid[0])
+    pixels = [int(max(0.0, min(1.0, v)) * 255.0) for row in grid for v in row]
+    image = Image.new("L", (cols, rows))
+    image.putdata(pixels)
+    image.save(path)
+
+
+def write_biome_grid_png(path: Path, grid: BiomeGrid) -> None:
+    Image = _require_pillow()
+    rows = len(grid)
+    cols = len(grid[0])
+
+    pixels: list[tuple[int, int, int]] = []
+    for row in grid:
+        for biome in row:
+            pixels.append(BIOME_COLORS.get(biome, (255, 0, 255)))
+
+    image = Image.new("RGB", (cols, rows))
+    image.putdata(pixels)
+    image.save(path)
 
 
 def generate_random_heightmap(rows: int, cols: int, seed: int | None = None) -> Grid:
@@ -242,6 +287,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rows", type=int, default=64, help="Righe per heightmap casuale.")
     parser.add_argument("--cols", type=int, default=96, help="Colonne per heightmap casuale.")
     parser.add_argument("--seed", type=int, default=42, help="Seed generatore casuale.")
+    parser.add_argument(
+        "--export-png",
+        action="store_true",
+        help="Esporta anche PNG per heightmap/temperature/moisture/biome (richiede Pillow).",
+    )
     return parser.parse_args()
 
 
@@ -264,8 +314,16 @@ def main() -> None:
     write_float_grid_csv(Path(f"{out_prefix}_moisture.csv"), moisture)
     write_biome_grid_csv(Path(f"{out_prefix}_biome.csv"), biomes)
 
+    if args.export_png:
+        write_float_grid_png(Path(f"{out_prefix}_heightmap.png"), heightmap)
+        write_float_grid_png(Path(f"{out_prefix}_temperature.png"), temperature)
+        write_float_grid_png(Path(f"{out_prefix}_moisture.png"), moisture)
+        write_biome_grid_png(Path(f"{out_prefix}_biome.png"), biomes)
+
     print("Simulazione completata.")
     print(f"Output scritto con prefisso: {out_prefix}")
+    if args.export_png:
+        print("PNG esportati (heightmap/temperature/moisture/biome).")
     print("Distribuzione biomi:")
     for biome, count in summarize_biomes(biomes).items():
         print(f" - {biome:18s}: {count}")
