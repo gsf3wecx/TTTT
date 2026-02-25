@@ -6,6 +6,17 @@ Programma iniziale (semplice ma estendibile) che, data una **heightmap** normali
 - umidità
 - biome risultante per ogni cella
 
+## Formati input supportati
+
+- **CSV** rettangolare con valori numerici tra `0` e `1`
+- **PNG / JPG / JPEG** (convertiti in scala di grigi; `0`=nero=quota bassa, `255`=bianco=quota alta)
+
+> Per PNG/JPG è richiesta la libreria **Pillow**:
+>
+> ```bash
+> pip install pillow
+> ```
+
 ## Esecuzione rapida
 
 ```bash
@@ -14,12 +25,16 @@ python3 climate_biome_sim.py --out-prefix output/demo
 
 Senza input genera una heightmap casuale smussata.
 
-## Input personalizzato
-
-Puoi passare un CSV (rettangolare) con valori tra `0` e `1`:
+## Input CSV personalizzato
 
 ```bash
-python3 climate_biome_sim.py data/mia_heightmap.csv --out-prefix output/mondo1
+python3 climate_biome_sim.py data/mia_heightmap.csv --out-prefix output/mondo_csv
+```
+
+## Input immagine personalizzato
+
+```bash
+python3 climate_biome_sim.py data/mia_heightmap.png --out-prefix output/mondo_img
 ```
 
 ## File output
@@ -39,7 +54,6 @@ Con prefisso `output/mondo1` otterrai:
 
 ## Idee per i prossimi step
 
-- supporto immagini heightmap (`.png`, `.tif`)
 - stagionalità e venti dinamici
 - correnti oceaniche
 - erosione e fiumi

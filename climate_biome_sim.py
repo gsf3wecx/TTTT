@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Simulatore semplice di clima e biomi basato su una heightmap.
 
-Input heightmap:
-- CSV con valori numerici normalizzati in [0, 1].
+Input heightmap supportato:
+- CSV con valori numerici normalizzati in [0, 1]
+- Immagini PNG/JPG/JPEG (convertite in scala di grigi e normalizzate in [0, 1])
 
 Output:
 - *_temperature.csv : temperatura normalizzata [0, 1]
@@ -20,6 +21,7 @@ from typing import List
 
 Grid = List[List[float]]
 BiomeGrid = List[List[str]]
+SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 
 
 class ClimateBiomeSimulator:
@@ -157,6 +159,41 @@ def read_heightmap_csv(path: Path) -> Grid:
     return grid
 
 
+def read_heightmap_image(path: Path) -> Grid:
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(
+            "Per leggere PNG/JPG serve Pillow. Installa con: pip install pillow"
+        ) from exc
+
+    with Image.open(path) as img:
+        gray = img.convert("L")
+        width, height = gray.size
+        pixels = list(gray.getdata())
+
+    if width == 0 or height == 0:
+        raise ValueError("L'immagine della heightmap è vuota.")
+
+    grid: Grid = []
+    for r in range(height):
+        start = r * width
+        row = pixels[start : start + width]
+        grid.append([value / 255.0 for value in row])
+    return grid
+
+
+def read_heightmap(path: Path) -> Grid:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return read_heightmap_csv(path)
+    if suffix in SUPPORTED_IMAGE_SUFFIXES:
+        return read_heightmap_image(path)
+    raise ValueError(
+        "Formato heightmap non supportato. Usa CSV, PNG, JPG o JPEG."
+    )
+
+
 def write_float_grid_csv(path: Path, grid: Grid) -> None:
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -194,8 +231,12 @@ def summarize_biomes(biome_grid: BiomeGrid) -> dict[str, int]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Simula clima e biomi da una heightmap CSV.")
-    parser.add_argument("input", nargs="?", help="Path al CSV heightmap (valori 0..1).")
+    parser = argparse.ArgumentParser(description="Simula clima e biomi da una heightmap CSV o immagine.")
+    parser.add_argument(
+        "input",
+        nargs="?",
+        help="Path heightmap: CSV (0..1) oppure PNG/JPG/JPEG in scala di grigi.",
+    )
     parser.add_argument("--out-prefix", default="output/world", help="Prefisso file di output.")
     parser.add_argument("--sea-level", type=float, default=0.45, help="Livello del mare (0..1).")
     parser.add_argument("--rows", type=int, default=64, help="Righe per heightmap casuale.")
@@ -208,7 +249,7 @@ def main() -> None:
     args = parse_args()
 
     if args.input:
-        heightmap = read_heightmap_csv(Path(args.input))
+        heightmap = read_heightmap(Path(args.input))
     else:
         heightmap = generate_random_heightmap(args.rows, args.cols, args.seed)
 
