@@ -63,11 +63,11 @@ Con prefisso `output/mondo1` ottieni sempre:
 - `output/mondo1_moisture.csv`
 - `output/mondo1_biome.csv`
 
-## Modello climatico (versione 0)
+## Modello climatico (versione 1)
 
-- **Temperatura** = gradiente latitudinale - penalità altitudine.
-- **Umidità** = venti prevalenti Ovest→Est, evaporazione dal mare, effetto rain shadow dietro montagne.
-- **Bioma** = classificazione a soglia usando altitudine, temperatura e umidità.
+- **Temperatura** = gradiente latitudinale + penalità altitudine + leggera continentalità (distanza dal mare).
+- **Umidità** = combinazione di: fasce latitudinali (equatore/subtropici/medie latitudini), distanza dal mare e advezione in entrambe le direzioni con rain shadow.
+- **Bioma** = classificazione a soglia usando altitudine, temperatura e umidità, con deserti limitati alle zone calde/secche.
 
 ## Idee per i prossimi step
 

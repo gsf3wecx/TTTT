@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import random
+from collections import deque
 from pathlib import Path
 from typing import List
 
@@ -57,15 +59,17 @@ class ClimateBiomeSimulator:
     def _compute_temperature(self, heightmap: Grid) -> Grid:
         rows = len(heightmap)
         cols = len(heightmap[0])
+        coast_distance = self._distance_to_water(heightmap)
         result: Grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
 
         for r in range(rows):
-            latitude = abs((r / (rows - 1)) * 2 - 1) if rows > 1 else 0
+            latitude = abs((r / (rows - 1)) * 2 - 1) if rows > 1 else 0.0
             latitude_factor = 1.0 - latitude
             for c in range(cols):
                 elevation = heightmap[r][c]
                 altitude_penalty = max(0.0, elevation - self.sea_level) * self.lapse_rate
-                temp = latitude_factor - altitude_penalty
+                continentality_penalty = coast_distance[r][c] * 0.08
+                temp = latitude_factor - altitude_penalty - continentality_penalty
                 result[r][c] = min(1.0, max(0.0, temp))
 
         return result
@@ -73,30 +77,77 @@ class ClimateBiomeSimulator:
     def _compute_moisture(self, heightmap: Grid) -> Grid:
         rows = len(heightmap)
         cols = len(heightmap[0])
+
+        coast_distance = self._distance_to_water(heightmap)
+        lat_moisture: Grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
+
+        for r in range(rows):
+            latitude = abs((r / (rows - 1)) * 2 - 1) if rows > 1 else 0.0
+
+            # Fasce umide/secche semplificate:
+            # - equatore molto umido
+            # - subtropicale più secca
+            # - medie latitudini moderatamente umide
+            # - poli secchi/freddi
+            equatorial_wet = max(0.0, 1.0 - abs(latitude - 0.0) / 0.32)
+            subtropical_dry = max(0.0, 1.0 - abs(latitude - 0.35) / 0.18)
+            temperate_wet = max(0.0, 1.0 - abs(latitude - 0.60) / 0.22)
+
+            band_value = 0.25 + 0.45 * equatorial_wet + 0.28 * temperate_wet - 0.30 * subtropical_dry
+            band_value = min(1.0, max(0.0, band_value))
+            for c in range(cols):
+                lat_moisture[r][c] = band_value
+
+        # Advezione umidità con venti nelle due direzioni: riduce il bias "solo coste ovest".
+        adv_west_to_east = self._advection_moisture(heightmap, west_to_east=True)
+        adv_east_to_west = self._advection_moisture(heightmap, west_to_east=False)
+
         moisture: Grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
+        for r in range(rows):
+            for c in range(cols):
+                h = heightmap[r][c]
+                if h < self.sea_level:
+                    moisture[r][c] = 1.0
+                    continue
+
+                # In prossimità del mare più umido; nell'entroterra decresce gradualmente.
+                coast_factor = math.exp(-3.3 * coast_distance[r][c])
+
+                adv = (adv_west_to_east[r][c] + adv_east_to_west[r][c]) * 0.5
+                m = 0.40 * coast_factor + 0.32 * lat_moisture[r][c] + 0.28 * adv
+                moisture[r][c] = min(1.0, max(0.0, m))
+
+        return self._blur(moisture)
+
+    def _advection_moisture(self, heightmap: Grid, west_to_east: bool) -> Grid:
+        rows = len(heightmap)
+        cols = len(heightmap[0])
+        result: Grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
+
+        indices = range(cols) if west_to_east else range(cols - 1, -1, -1)
 
         for r in range(rows):
             carried_humidity = 0.0
-            for c in range(cols):
+            for c in indices:
                 h = heightmap[r][c]
                 is_water = h < self.sea_level
 
                 if is_water:
-                    carried_humidity = min(1.0, carried_humidity + 0.35)
-                    moisture[r][c] = 1.0
+                    carried_humidity = min(1.0, carried_humidity + 0.34)
+                    result[r][c] = 1.0
                     continue
 
-                rain = carried_humidity * 0.3
-                moisture[r][c] = rain
+                rain = carried_humidity * 0.34
+                result[r][c] = min(1.0, rain + 0.04)
 
                 if h > self.mountain_threshold:
-                    carried_humidity *= 0.35
+                    carried_humidity *= 0.32
+                elif h > self.sea_level + 0.08:
+                    carried_humidity *= 0.68
                 else:
-                    carried_humidity *= 0.82
+                    carried_humidity *= 0.84
 
-                moisture[r][c] = min(1.0, moisture[r][c] + 0.05)
-
-        return self._blur(moisture)
+        return result
 
     def _classify_biomes(self, heightmap: Grid, temperature: Grid, moisture: Grid) -> BiomeGrid:
         rows = len(heightmap)
@@ -113,18 +164,47 @@ class ClimateBiomeSimulator:
                     biomes[r][c] = "OCEAN"
                 elif h > 0.90:
                     biomes[r][c] = "ALPINE"
-                elif t < 0.2:
+                elif t < 0.18:
                     biomes[r][c] = "TUNDRA"
-                elif m < 0.15:
+                elif m < 0.12 and t > 0.30:
                     biomes[r][c] = "DESERT"
-                elif m < 0.35:
+                elif m < 0.25:
                     biomes[r][c] = "GRASSLAND"
-                elif t > 0.65 and m > 0.6:
+                elif t > 0.68 and m > 0.55:
                     biomes[r][c] = "TROPICAL_FOREST"
                 else:
                     biomes[r][c] = "TEMPERATE_FOREST"
 
         return biomes
+
+    def _distance_to_water(self, heightmap: Grid) -> Grid:
+        rows = len(heightmap)
+        cols = len(heightmap[0])
+        dist = [[-1 for _ in range(cols)] for _ in range(rows)]
+        q: deque[tuple[int, int]] = deque()
+
+        for r in range(rows):
+            for c in range(cols):
+                if heightmap[r][c] < self.sea_level:
+                    dist[r][c] = 0
+                    q.append((r, c))
+
+        if not q:
+            return [[1.0 for _ in range(cols)] for _ in range(rows)]
+
+        while q:
+            r, c = q.popleft()
+            for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                rr, cc = r + dr, c + dc
+                if 0 <= rr < rows and 0 <= cc < cols and dist[rr][cc] == -1:
+                    dist[rr][cc] = dist[r][c] + 1
+                    q.append((rr, cc))
+
+        max_dist = max(max(row) for row in dist)
+        if max_dist <= 0:
+            return [[0.0 for _ in range(cols)] for _ in range(rows)]
+
+        return [[d / max_dist for d in row] for row in dist]
 
     @staticmethod
     def _blur(grid: Grid) -> Grid:
@@ -196,8 +276,6 @@ def choose_effective_sea_level(
     if sea_level is not None:
         return sea_level, "manual"
 
-    # Per immagini reali il range utile spesso è sbilanciato: scegliamo un livello
-    # mare automatico basato su quantile (target oceano).
     if input_path and input_path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES:
         auto_level = quantile(flatten_grid(heightmap), sea_level_quantile)
         return auto_level, f"auto-quantile({sea_level_quantile:.2f})"
