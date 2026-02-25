@@ -61,7 +61,11 @@ class ClimateBiomeSimulator:
 
         for r in range(rows):
             latitude = abs((r / (rows - 1)) * 2 - 1) if rows > 1 else 0
+<<<<<<< codex/create-climate-and-biome-simulation-program-bthtwi
             latitude_factor = 1.0 - latitude
+=======
+            latitude_factor = 1.0 - latitude  # caldo all'equatore, freddo ai poli
+>>>>>>> main
             for c in range(cols):
                 elevation = heightmap[r][c]
                 altitude_penalty = max(0.0, elevation - self.sea_level) * self.lapse_rate
@@ -75,6 +79,10 @@ class ClimateBiomeSimulator:
         cols = len(heightmap[0])
         moisture: Grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
 
+<<<<<<< codex/create-climate-and-biome-simulation-program-bthtwi
+=======
+        # Venti prevalenti da ovest verso est (scan da sinistra a destra).
+>>>>>>> main
         for r in range(rows):
             carried_humidity = 0.0
             for c in range(cols):
@@ -86,16 +94,31 @@ class ClimateBiomeSimulator:
                     moisture[r][c] = 1.0
                     continue
 
+<<<<<<< codex/create-climate-and-biome-simulation-program-bthtwi
                 rain = carried_humidity * 0.3
                 moisture[r][c] = rain
 
+=======
+                # Precipitazione su terra: parte dell'umidità cade.
+                rain = carried_humidity * 0.3
+                moisture[r][c] = rain
+
+                # Rain shadow dietro montagne elevate.
+>>>>>>> main
                 if h > self.mountain_threshold:
                     carried_humidity *= 0.35
                 else:
                     carried_humidity *= 0.82
 
+<<<<<<< codex/create-climate-and-biome-simulation-program-bthtwi
                 moisture[r][c] = min(1.0, moisture[r][c] + 0.05)
 
+=======
+                # Evapotraspirazione locale minima.
+                moisture[r][c] = min(1.0, moisture[r][c] + 0.05)
+
+        # Smussamento leggero locale.
+>>>>>>> main
         return self._blur(moisture)
 
     def _classify_biomes(self, heightmap: Grid, temperature: Grid, moisture: Grid) -> BiomeGrid:
@@ -168,6 +191,7 @@ def _require_pillow():
     return Image
 
 
+<<<<<<< codex/create-climate-and-biome-simulation-program-bthtwi
 def flatten_grid(grid: Grid) -> list[float]:
     return [v for row in grid for v in row]
 
@@ -205,6 +229,8 @@ def choose_effective_sea_level(
     return 0.45, "default"
 
 
+=======
+>>>>>>> main
 def read_heightmap_csv(path: Path) -> Grid:
     with path.open("r", newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
@@ -241,7 +267,13 @@ def read_heightmap(path: Path) -> Grid:
         return read_heightmap_csv(path)
     if suffix in SUPPORTED_IMAGE_SUFFIXES:
         return read_heightmap_image(path)
+<<<<<<< codex/create-climate-and-biome-simulation-program-bthtwi
     raise ValueError("Formato heightmap non supportato. Usa CSV, PNG, JPG o JPEG.")
+=======
+    raise ValueError(
+        "Formato heightmap non supportato. Usa CSV, PNG, JPG o JPEG."
+    )
+>>>>>>> main
 
 
 def write_float_grid_csv(path: Path, grid: Grid) -> None:
@@ -286,9 +318,17 @@ def generate_random_heightmap(rows: int, cols: int, seed: int | None = None) -> 
     rng = random.Random(seed)
     grid: Grid = [[rng.random() for _ in range(cols)] for _ in range(rows)]
 
+<<<<<<< codex/create-climate-and-biome-simulation-program-bthtwi
     for _ in range(3):
         grid = ClimateBiomeSimulator._blur(grid)
 
+=======
+    # Smussa per ottenere forme più naturali.
+    for _ in range(3):
+        grid = ClimateBiomeSimulator._blur(grid)
+
+    # Normalizza dopo smussamento.
+>>>>>>> main
     min_v = min(min(row) for row in grid)
     max_v = max(max(row) for row in grid)
     span = max(1e-9, max_v - min_v)
@@ -311,6 +351,7 @@ def parse_args() -> argparse.Namespace:
         help="Path heightmap: CSV (0..1) oppure PNG/JPG/JPEG in scala di grigi.",
     )
     parser.add_argument("--out-prefix", default="output/world", help="Prefisso file di output.")
+<<<<<<< codex/create-climate-and-biome-simulation-program-bthtwi
     parser.add_argument(
         "--sea-level",
         type=float,
@@ -323,6 +364,9 @@ def parse_args() -> argparse.Namespace:
         default=0.72,
         help="Quantile usato per auto-stima livello mare su immagini (es. 0.72 ≈ 72%% oceano).",
     )
+=======
+    parser.add_argument("--sea-level", type=float, default=0.45, help="Livello del mare (0..1).")
+>>>>>>> main
     parser.add_argument("--rows", type=int, default=64, help="Righe per heightmap casuale.")
     parser.add_argument("--cols", type=int, default=96, help="Colonne per heightmap casuale.")
     parser.add_argument("--seed", type=int, default=42, help="Seed generatore casuale.")
@@ -337,6 +381,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+<<<<<<< codex/create-climate-and-biome-simulation-program-bthtwi
     input_path: Path | None = Path(args.input) if args.input else None
     if input_path:
         heightmap = read_heightmap(input_path)
@@ -351,6 +396,14 @@ def main() -> None:
     )
 
     simulator = ClimateBiomeSimulator(sea_level=effective_sea_level)
+=======
+    if args.input:
+        heightmap = read_heightmap(Path(args.input))
+    else:
+        heightmap = generate_random_heightmap(args.rows, args.cols, args.seed)
+
+    simulator = ClimateBiomeSimulator(sea_level=args.sea_level)
+>>>>>>> main
     temperature, moisture, biomes = simulator.simulate(heightmap)
 
     out_prefix = Path(args.out_prefix)
@@ -369,10 +422,13 @@ def main() -> None:
 
     print("Simulazione completata.")
     print(f"Output scritto con prefisso: {out_prefix}")
+<<<<<<< codex/create-climate-and-biome-simulation-program-bthtwi
     print(
         f"Sea level effettivo: {effective_sea_level:.4f} "
         f"(mode={sea_level_mode}, oceano={ocean_ratio(heightmap, effective_sea_level) * 100:.1f}%)"
     )
+=======
+>>>>>>> main
     if args.export_png:
         print("PNG esportati (heightmap/temperature/moisture/biome).")
     print("Distribuzione biomi:")
