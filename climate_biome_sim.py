@@ -61,7 +61,7 @@ class ClimateBiomeSimulator:
 
         for r in range(rows):
             latitude = abs((r / (rows - 1)) * 2 - 1) if rows > 1 else 0
-            latitude_factor = 1.0 - latitude  # caldo all'equatore, freddo ai poli
+            latitude_factor = 1.0 - latitude
             for c in range(cols):
                 elevation = heightmap[r][c]
                 altitude_penalty = max(0.0, elevation - self.sea_level) * self.lapse_rate
@@ -75,7 +75,6 @@ class ClimateBiomeSimulator:
         cols = len(heightmap[0])
         moisture: Grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
 
-        # Venti prevalenti da ovest verso est (scan da sinistra a destra).
         for r in range(rows):
             carried_humidity = 0.0
             for c in range(cols):
@@ -87,20 +86,16 @@ class ClimateBiomeSimulator:
                     moisture[r][c] = 1.0
                     continue
 
-                # Precipitazione su terra: parte dell'umidità cade.
                 rain = carried_humidity * 0.3
                 moisture[r][c] = rain
 
-                # Rain shadow dietro montagne elevate.
                 if h > self.mountain_threshold:
                     carried_humidity *= 0.35
                 else:
                     carried_humidity *= 0.82
 
-                # Evapotraspirazione locale minima.
                 moisture[r][c] = min(1.0, moisture[r][c] + 0.05)
 
-        # Smussamento leggero locale.
         return self._blur(moisture)
 
     def _classify_biomes(self, heightmap: Grid, temperature: Grid, moisture: Grid) -> BiomeGrid:
@@ -173,6 +168,43 @@ def _require_pillow():
     return Image
 
 
+def flatten_grid(grid: Grid) -> list[float]:
+    return [v for row in grid for v in row]
+
+
+def quantile(values: list[float], q: float) -> float:
+    if not values:
+        raise ValueError("Impossibile calcolare il quantile su lista vuota.")
+    q = min(1.0, max(0.0, q))
+    sorted_values = sorted(values)
+    idx = int((len(sorted_values) - 1) * q)
+    return sorted_values[idx]
+
+
+def ocean_ratio(heightmap: Grid, sea_level: float) -> float:
+    values = flatten_grid(heightmap)
+    sea_cells = sum(1 for v in values if v < sea_level)
+    return sea_cells / max(1, len(values))
+
+
+def choose_effective_sea_level(
+    heightmap: Grid,
+    input_path: Path | None,
+    sea_level: float | None,
+    sea_level_quantile: float,
+) -> tuple[float, str]:
+    if sea_level is not None:
+        return sea_level, "manual"
+
+    # Per immagini reali il range utile spesso è sbilanciato: scegliamo un livello
+    # mare automatico basato su quantile (target oceano).
+    if input_path and input_path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES:
+        auto_level = quantile(flatten_grid(heightmap), sea_level_quantile)
+        return auto_level, f"auto-quantile({sea_level_quantile:.2f})"
+
+    return 0.45, "default"
+
+
 def read_heightmap_csv(path: Path) -> Grid:
     with path.open("r", newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
@@ -209,9 +241,7 @@ def read_heightmap(path: Path) -> Grid:
         return read_heightmap_csv(path)
     if suffix in SUPPORTED_IMAGE_SUFFIXES:
         return read_heightmap_image(path)
-    raise ValueError(
-        "Formato heightmap non supportato. Usa CSV, PNG, JPG o JPEG."
-    )
+    raise ValueError("Formato heightmap non supportato. Usa CSV, PNG, JPG o JPEG.")
 
 
 def write_float_grid_csv(path: Path, grid: Grid) -> None:
@@ -256,11 +286,9 @@ def generate_random_heightmap(rows: int, cols: int, seed: int | None = None) -> 
     rng = random.Random(seed)
     grid: Grid = [[rng.random() for _ in range(cols)] for _ in range(rows)]
 
-    # Smussa per ottenere forme più naturali.
     for _ in range(3):
         grid = ClimateBiomeSimulator._blur(grid)
 
-    # Normalizza dopo smussamento.
     min_v = min(min(row) for row in grid)
     max_v = max(max(row) for row in grid)
     span = max(1e-9, max_v - min_v)
@@ -283,7 +311,18 @@ def parse_args() -> argparse.Namespace:
         help="Path heightmap: CSV (0..1) oppure PNG/JPG/JPEG in scala di grigi.",
     )
     parser.add_argument("--out-prefix", default="output/world", help="Prefisso file di output.")
-    parser.add_argument("--sea-level", type=float, default=0.45, help="Livello del mare (0..1).")
+    parser.add_argument(
+        "--sea-level",
+        type=float,
+        default=None,
+        help="Livello del mare assoluto (0..1). Se omesso, su immagini viene stimato automaticamente.",
+    )
+    parser.add_argument(
+        "--sea-level-quantile",
+        type=float,
+        default=0.72,
+        help="Quantile usato per auto-stima livello mare su immagini (es. 0.72 ≈ 72%% oceano).",
+    )
     parser.add_argument("--rows", type=int, default=64, help="Righe per heightmap casuale.")
     parser.add_argument("--cols", type=int, default=96, help="Colonne per heightmap casuale.")
     parser.add_argument("--seed", type=int, default=42, help="Seed generatore casuale.")
@@ -295,15 +334,33 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def validate_cli_args(args: argparse.Namespace) -> None:
+    if args.sea_level is not None and not 0.0 <= args.sea_level <= 1.0:
+        raise ValueError("--sea-level deve essere compreso tra 0 e 1.")
+    if not 0.0 <= args.sea_level_quantile <= 1.0:
+        raise ValueError("--sea-level-quantile deve essere compreso tra 0 e 1.")
+    if args.rows <= 0 or args.cols <= 0:
+        raise ValueError("--rows e --cols devono essere interi positivi.")
+
+
 def main() -> None:
     args = parse_args()
+    validate_cli_args(args)
 
-    if args.input:
-        heightmap = read_heightmap(Path(args.input))
+    input_path: Path | None = Path(args.input) if args.input else None
+    if input_path:
+        heightmap = read_heightmap(input_path)
     else:
         heightmap = generate_random_heightmap(args.rows, args.cols, args.seed)
 
-    simulator = ClimateBiomeSimulator(sea_level=args.sea_level)
+    effective_sea_level, sea_level_mode = choose_effective_sea_level(
+        heightmap=heightmap,
+        input_path=input_path,
+        sea_level=args.sea_level,
+        sea_level_quantile=args.sea_level_quantile,
+    )
+
+    simulator = ClimateBiomeSimulator(sea_level=effective_sea_level)
     temperature, moisture, biomes = simulator.simulate(heightmap)
 
     out_prefix = Path(args.out_prefix)
@@ -322,6 +379,10 @@ def main() -> None:
 
     print("Simulazione completata.")
     print(f"Output scritto con prefisso: {out_prefix}")
+    print(
+        f"Sea level effettivo: {effective_sea_level:.4f} "
+        f"(mode={sea_level_mode}, oceano={ocean_ratio(heightmap, effective_sea_level) * 100:.1f}%)"
+    )
     if args.export_png:
         print("PNG esportati (heightmap/temperature/moisture/biome).")
     print("Distribuzione biomi:")
