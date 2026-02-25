@@ -28,12 +28,24 @@ SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 
 BIOME_COLORS: dict[str, tuple[int, int, int]] = {
     "OCEAN": (30, 90, 180),
-    "ALPINE": (180, 180, 180),
-    "TUNDRA": (210, 230, 230),
-    "DESERT": (237, 201, 175),
-    "GRASSLAND": (124, 179, 66),
-    "TEMPERATE_FOREST": (34, 139, 34),
-    "TROPICAL_FOREST": (0, 100, 0),
+    "Calotta polare": (230, 245, 255),
+    "Tundra": (190, 215, 220),
+    "Taiga": (58, 95, 62),
+    "Foresta decidua": (88, 148, 70),
+    "Steppa e prateria": (180, 200, 95),
+    "Foresta pluviale temperata": (25, 120, 78),
+    "Foresta pluviale equatoriale": (13, 94, 45),
+    "Foresta e macchia mediterranea": (125, 150, 85),
+    "Giungla": (15, 125, 40),
+    "Deserto sabbioso": (237, 201, 140),
+    "Deserto roccioso": (193, 163, 128),
+    "Deserto semiarido": (199, 186, 132),
+    "Steppa arida": (171, 170, 104),
+    "Savana erbosa": (156, 180, 75),
+    "Savana alberata": (118, 160, 72),
+    "Foresta subtropicale arida": (92, 132, 74),
+    "Tundra alpina": (200, 210, 210),
+    "Vegetazione alpina": (170, 185, 155),
 }
 
 
@@ -43,20 +55,28 @@ class ClimateBiomeSimulator:
         sea_level: float = 0.45,
         lapse_rate: float = 0.65,
         mountain_threshold: float = 0.75,
+        equator_temp: float = 1.0,
+        north_pole_temp: float = 0.0,
+        south_pole_temp: float = 0.0,
     ) -> None:
         self.sea_level = sea_level
         self.lapse_rate = lapse_rate
         self.mountain_threshold = mountain_threshold
+        self.equator_temp = equator_temp
+        self.north_pole_temp = north_pole_temp
+        self.south_pole_temp = south_pole_temp
 
     def simulate(self, heightmap: Grid) -> tuple[Grid, Grid, BiomeGrid]:
         self._validate_heightmap(heightmap)
 
         temperature = self._compute_temperature(heightmap)
         moisture = self._compute_moisture(heightmap)
+
         # Smussa leggermente i campi climatici prima della classificazione
-        # per ridurre i bordi "a blocchi" tra biomi adiacenti.
+        # per ridurre i bordi netti a pixel singolo.
         temperature_for_biome = self._blur(temperature)
         moisture_for_biome = self._blur(moisture)
+
         biomes = self._classify_biomes(heightmap, temperature_for_biome, moisture_for_biome)
         return temperature, moisture, biomes
 
@@ -67,13 +87,24 @@ class ClimateBiomeSimulator:
         result: Grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
 
         for r in range(rows):
-            latitude = abs((r / (rows - 1)) * 2 - 1) if rows > 1 else 0.0
-            latitude_factor = 1.0 - latitude
+            # Profilo latitudinale asimmetrico configurabile:
+            # Polo Nord -> Equatore -> Polo Sud.
+            if rows <= 1:
+                latitude_temp = self.equator_temp
+            else:
+                pos = r / (rows - 1)  # 0=nord, 1=sud
+                if pos <= 0.5:
+                    mix = pos / 0.5
+                    latitude_temp = self.north_pole_temp + (self.equator_temp - self.north_pole_temp) * mix
+                else:
+                    mix = (pos - 0.5) / 0.5
+                    latitude_temp = self.equator_temp + (self.south_pole_temp - self.equator_temp) * mix
+
             for c in range(cols):
                 elevation = heightmap[r][c]
                 altitude_penalty = max(0.0, elevation - self.sea_level) * self.lapse_rate
-                continentality_penalty = coast_distance[r][c] * 0.08
-                temp = latitude_factor - altitude_penalty - continentality_penalty
+                continentality_penalty = coast_distance[r][c] * 0.07
+                temp = latitude_temp - altitude_penalty - continentality_penalty
                 result[r][c] = min(1.0, max(0.0, temp))
 
         return result
@@ -88,21 +119,18 @@ class ClimateBiomeSimulator:
         for r in range(rows):
             latitude = abs((r / (rows - 1)) * 2 - 1) if rows > 1 else 0.0
 
-            # Fasce umide/secche semplificate:
-            # - equatore molto umido
-            # - subtropicale più secca
-            # - medie latitudini moderatamente umide
-            # - poli secchi/freddi
-            equatorial_wet = max(0.0, 1.0 - abs(latitude - 0.0) / 0.32)
-            subtropical_dry = max(0.0, 1.0 - abs(latitude - 0.35) / 0.18)
-            temperate_wet = max(0.0, 1.0 - abs(latitude - 0.60) / 0.22)
+            # Fasce climatiche semplificate (più realistiche globalmente):
+            # equatore umido, subtropicale più secca, medie latitudini più umide.
+            equatorial_wet = max(0.0, 1.0 - abs(latitude - 0.0) / 0.33)
+            subtropical_dry = max(0.0, 1.0 - abs(latitude - 0.33) / 0.18)
+            temperate_wet = max(0.0, 1.0 - abs(latitude - 0.58) / 0.24)
 
-            band_value = 0.25 + 0.45 * equatorial_wet + 0.28 * temperate_wet - 0.30 * subtropical_dry
+            band_value = 0.30 + 0.50 * equatorial_wet + 0.25 * temperate_wet - 0.28 * subtropical_dry
             band_value = min(1.0, max(0.0, band_value))
             for c in range(cols):
                 lat_moisture[r][c] = band_value
 
-        # Advezione umidità con venti nelle due direzioni: riduce il bias "solo coste ovest".
+        # Advezione bidirezionale per non confinare la pioggia alle sole coste ovest.
         adv_west_to_east = self._advection_moisture(heightmap, west_to_east=True)
         adv_east_to_west = self._advection_moisture(heightmap, west_to_east=False)
 
@@ -114,14 +142,31 @@ class ClimateBiomeSimulator:
                     moisture[r][c] = 1.0
                     continue
 
-                # In prossimità del mare più umido; nell'entroterra decresce gradualmente.
-                coast_factor = math.exp(-3.3 * coast_distance[r][c])
-
+                coast_factor = math.exp(-2.1 * coast_distance[r][c])
                 adv = (adv_west_to_east[r][c] + adv_east_to_west[r][c]) * 0.5
-                m = 0.40 * coast_factor + 0.32 * lat_moisture[r][c] + 0.28 * adv
+
+                # Peso importante alle fasce latitudinali: l'equatore resta piovoso
+                # anche in zone non strettamente costiere.
+                m = 0.18 * coast_factor + 0.56 * lat_moisture[r][c] + 0.26 * adv
                 moisture[r][c] = min(1.0, max(0.0, m))
 
-        return self._blur(moisture)
+        # Diffusione orizzontale leggera per far penetrare l'umidità nell'interno.
+        for _ in range(7):
+            blurred = self._blur(moisture)
+            for r in range(rows):
+                for c in range(cols):
+                    if heightmap[r][c] < self.sea_level:
+                        moisture[r][c] = 1.0
+                    else:
+                        moisture[r][c] = min(
+                            1.0,
+                            max(
+                                0.0,
+                                0.58 * moisture[r][c] + 0.30 * blurred[r][c] + 0.12 * lat_moisture[r][c],
+                            ),
+                        )
+
+        return moisture
 
     def _advection_moisture(self, heightmap: Grid, west_to_east: bool) -> Grid:
         rows = len(heightmap)
@@ -142,12 +187,12 @@ class ClimateBiomeSimulator:
                     continue
 
                 rain = carried_humidity * 0.34
-                result[r][c] = min(1.0, rain + 0.04)
+                result[r][c] = min(1.0, rain + 0.05)
 
                 if h > self.mountain_threshold:
-                    carried_humidity *= 0.32
+                    carried_humidity *= 0.30
                 elif h > self.sea_level + 0.08:
-                    carried_humidity *= 0.68
+                    carried_humidity *= 0.66
                 else:
                     carried_humidity *= 0.84
 
@@ -159,6 +204,7 @@ class ClimateBiomeSimulator:
         biomes: BiomeGrid = [["" for _ in range(cols)] for _ in range(rows)]
 
         for r in range(rows):
+            latitude = abs((r / (rows - 1)) * 2 - 1) if rows > 1 else 0.0
             for c in range(cols):
                 h = heightmap[r][c]
                 t = temperature[r][c]
@@ -166,18 +212,61 @@ class ClimateBiomeSimulator:
 
                 if h < self.sea_level:
                     biomes[r][c] = "OCEAN"
-                elif h > 0.90:
-                    biomes[r][c] = "ALPINE"
+                    continue
+
+                # Biomi montani/alpini
+                if h > 0.93:
+                    biomes[r][c] = "Tundra alpina" if t < 0.35 else "Vegetazione alpina"
+                    continue
+                if h > 0.86 and t < 0.30:
+                    biomes[r][c] = "Tundra alpina"
+                    continue
+
+                # Fascia polare
+                if t < 0.08:
+                    biomes[r][c] = "Calotta polare"
                 elif t < 0.18:
-                    biomes[r][c] = "TUNDRA"
-                elif m < 0.12 and t > 0.30:
-                    biomes[r][c] = "DESERT"
-                elif m < 0.25:
-                    biomes[r][c] = "GRASSLAND"
-                elif t > 0.68 and m > 0.55:
-                    biomes[r][c] = "TROPICAL_FOREST"
+                    biomes[r][c] = "Tundra"
+                # Freddo
+                elif t < 0.34:
+                    if m < 0.28:
+                        biomes[r][c] = "Steppa e prateria"
+                    else:
+                        biomes[r][c] = "Taiga"
+                # Temperato
+                elif t < 0.56:
+                    if m < 0.16:
+                        biomes[r][c] = "Steppa arida"
+                    elif m < 0.30:
+                        biomes[r][c] = "Steppa e prateria"
+                    elif m < 0.55:
+                        biomes[r][c] = "Foresta e macchia mediterranea"
+                    elif m < 0.72:
+                        biomes[r][c] = "Foresta decidua"
+                    else:
+                        biomes[r][c] = "Foresta pluviale temperata"
+                # Caldo / subtropicale / tropicale
                 else:
-                    biomes[r][c] = "TEMPERATE_FOREST"
+                    if m < 0.08:
+                        biomes[r][c] = "Deserto roccioso" if h > self.sea_level + 0.2 else "Deserto sabbioso"
+                    elif m < 0.16:
+                        biomes[r][c] = "Deserto semiarido"
+                    elif m < 0.26:
+                        biomes[r][c] = "Foresta subtropicale arida"
+                    elif m < 0.36:
+                        biomes[r][c] = "Steppa arida"
+                    elif m < 0.48:
+                        biomes[r][c] = "Savana erbosa"
+                    elif m < 0.62:
+                        biomes[r][c] = "Savana alberata"
+                    else:
+                        # Equatore umido -> foresta pluviale equatoriale / giungla
+                        if latitude < 0.18 and m > 0.78:
+                            biomes[r][c] = "Giungla"
+                        elif latitude < 0.24:
+                            biomes[r][c] = "Foresta pluviale equatoriale"
+                        else:
+                            biomes[r][c] = "Foresta pluviale temperata"
 
         return biomes
 
@@ -421,6 +510,24 @@ def parse_args() -> argparse.Namespace:
         default=0.72,
         help="Quantile usato per auto-stima livello mare su immagini (es. 0.72 ≈ 72%% oceano).",
     )
+    parser.add_argument(
+        "--temp-equator",
+        type=float,
+        default=1.0,
+        help="Temperatura normalizzata all'equatore (0..1).",
+    )
+    parser.add_argument(
+        "--temp-north-pole",
+        type=float,
+        default=0.0,
+        help="Temperatura normalizzata al polo nord (0..1).",
+    )
+    parser.add_argument(
+        "--temp-south-pole",
+        type=float,
+        default=0.0,
+        help="Temperatura normalizzata al polo sud (0..1).",
+    )
     parser.add_argument("--rows", type=int, default=64, help="Righe per heightmap casuale.")
     parser.add_argument("--cols", type=int, default=96, help="Colonne per heightmap casuale.")
     parser.add_argument("--seed", type=int, default=42, help="Seed generatore casuale.")
@@ -440,6 +547,14 @@ def validate_cli_args(args: argparse.Namespace) -> None:
     if args.rows <= 0 or args.cols <= 0:
         raise ValueError("--rows e --cols devono essere interi positivi.")
 
+    for option_name, option_value in (
+        ("--temp-equator", args.temp_equator),
+        ("--temp-north-pole", args.temp_north_pole),
+        ("--temp-south-pole", args.temp_south_pole),
+    ):
+        if not 0.0 <= option_value <= 1.0:
+            raise ValueError(f"{option_name} deve essere compreso tra 0 e 1.")
+
 
 def main() -> None:
     args = parse_args()
@@ -458,7 +573,12 @@ def main() -> None:
         sea_level_quantile=args.sea_level_quantile,
     )
 
-    simulator = ClimateBiomeSimulator(sea_level=effective_sea_level)
+    simulator = ClimateBiomeSimulator(
+        sea_level=effective_sea_level,
+        equator_temp=args.temp_equator,
+        north_pole_temp=args.temp_north_pole,
+        south_pole_temp=args.temp_south_pole,
+    )
     temperature, moisture, biomes = simulator.simulate(heightmap)
 
     out_prefix = Path(args.out_prefix)
@@ -481,11 +601,15 @@ def main() -> None:
         f"Sea level effettivo: {effective_sea_level:.4f} "
         f"(mode={sea_level_mode}, oceano={ocean_ratio(heightmap, effective_sea_level) * 100:.1f}%)"
     )
+    print(
+        "Temperature: "
+        f"north={args.temp_north_pole:.2f}, equator={args.temp_equator:.2f}, south={args.temp_south_pole:.2f}"
+    )
     if args.export_png:
         print("PNG esportati (heightmap/temperature/moisture/biome).")
     print("Distribuzione biomi:")
     for biome, count in summarize_biomes(biomes).items():
-        print(f" - {biome:18s}: {count}")
+        print(f" - {biome:28s}: {count}")
 
 
 if __name__ == "__main__":
