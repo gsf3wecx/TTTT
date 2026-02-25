@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import heapq
 import math
 import random
-from collections import deque
 from pathlib import Path
 from typing import List
 
@@ -53,7 +53,11 @@ class ClimateBiomeSimulator:
 
         temperature = self._compute_temperature(heightmap)
         moisture = self._compute_moisture(heightmap)
-        biomes = self._classify_biomes(heightmap, temperature, moisture)
+        # Smussa leggermente i campi climatici prima della classificazione
+        # per ridurre i bordi "a blocchi" tra biomi adiacenti.
+        temperature_for_biome = self._blur(temperature)
+        moisture_for_biome = self._blur(moisture)
+        biomes = self._classify_biomes(heightmap, temperature_for_biome, moisture_for_biome)
         return temperature, moisture, biomes
 
     def _compute_temperature(self, heightmap: Grid) -> Grid:
@@ -180,28 +184,44 @@ class ClimateBiomeSimulator:
     def _distance_to_water(self, heightmap: Grid) -> Grid:
         rows = len(heightmap)
         cols = len(heightmap[0])
-        dist = [[-1 for _ in range(cols)] for _ in range(rows)]
-        q: deque[tuple[int, int]] = deque()
+        inf = float("inf")
+        dist = [[inf for _ in range(cols)] for _ in range(rows)]
+        heap: list[tuple[float, int, int]] = []
 
         for r in range(rows):
             for c in range(cols):
                 if heightmap[r][c] < self.sea_level:
-                    dist[r][c] = 0
-                    q.append((r, c))
+                    dist[r][c] = 0.0
+                    heapq.heappush(heap, (0.0, r, c))
 
-        if not q:
+        if not heap:
             return [[1.0 for _ in range(cols)] for _ in range(rows)]
 
-        while q:
-            r, c = q.popleft()
-            for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        neighbors = (
+            (1, 0, 1.0),
+            (-1, 0, 1.0),
+            (0, 1, 1.0),
+            (0, -1, 1.0),
+            (1, 1, math.sqrt(2.0)),
+            (1, -1, math.sqrt(2.0)),
+            (-1, 1, math.sqrt(2.0)),
+            (-1, -1, math.sqrt(2.0)),
+        )
+
+        while heap:
+            current, r, c = heapq.heappop(heap)
+            if current > dist[r][c]:
+                continue
+            for dr, dc, cost in neighbors:
                 rr, cc = r + dr, c + dc
-                if 0 <= rr < rows and 0 <= cc < cols and dist[rr][cc] == -1:
-                    dist[rr][cc] = dist[r][c] + 1
-                    q.append((rr, cc))
+                if 0 <= rr < rows and 0 <= cc < cols:
+                    candidate = current + cost
+                    if candidate < dist[rr][cc]:
+                        dist[rr][cc] = candidate
+                        heapq.heappush(heap, (candidate, rr, cc))
 
         max_dist = max(max(row) for row in dist)
-        if max_dist <= 0:
+        if not math.isfinite(max_dist) or max_dist <= 0.0:
             return [[0.0 for _ in range(cols)] for _ in range(rows)]
 
         return [[d / max_dist for d in row] for row in dist]

@@ -68,6 +68,7 @@ Con prefisso `output/mondo1` ottieni sempre:
 - **Temperatura** = gradiente latitudinale + penalità altitudine + leggera continentalità (distanza dal mare).
 - **Umidità** = combinazione di: fasce latitudinali (equatore/subtropici/medie latitudini), distanza dal mare e advezione in entrambe le direzioni con rain shadow.
 - **Bioma** = classificazione a soglia usando altitudine, temperatura e umidità, con deserti limitati alle zone calde/secche.
+- **Transizioni** = smussamento climatico pre-classificazione e distanza dal mare isotropa (8 direzioni) per ridurre artefatti a blocchi/rombo.
 
 ## Idee per i prossimi step
 
